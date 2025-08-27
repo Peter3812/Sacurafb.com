@@ -330,7 +330,7 @@ export default function ContentGenerator() {
                               size="sm" 
                               variant="outline"
                               onClick={() => {
-                                const scheduledTime = prompt('Schedule for when? (YYYY-MM-DD HH:MM format)');
+                                const scheduledTime = window.prompt('Schedule for when? (YYYY-MM-DD HH:MM format)');
                                 if (scheduledTime) {
                                   handleSchedule(content.id, scheduledTime);
                                 }
