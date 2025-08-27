@@ -1,8 +1,8 @@
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
 export default function Sidebar() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
 
   const navItems = [
     { path: "/", icon: "fas fa-chart-line", label: "Dashboard" },
@@ -33,40 +33,56 @@ export default function Sidebar() {
       <nav className="px-4 pb-4">
         <div className="space-y-1">
           {navItems.map((item) => (
-            <Link 
-              key={item.path} 
-              href={item.path}
+            <div
+              key={item.path}
+              onClick={() => setLocation(item.path)}
               className={cn(
-                "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all",
+                "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all cursor-pointer",
                 location === item.path
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground dark:text-muted-foreground hover:bg-accent dark:hover:bg-accent hover:text-accent-foreground dark:hover:text-accent-foreground"
               )}
               data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setLocation(item.path);
+                }
+              }}
             >
               <i className={`${item.icon} w-4 h-4`}></i>
               <span>{item.label}</span>
-            </Link>
+            </div>
           ))}
         </div>
 
         <div className="mt-8 pt-6 border-t border-border dark:border-border">
           <div className="space-y-1">
             {bottomNavItems.map((item) => (
-              <Link 
-                key={item.path} 
-                href={item.path}
+              <div
+                key={item.path}
+                onClick={() => setLocation(item.path)}
                 className={cn(
-                  "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all",
+                  "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all cursor-pointer",
                   location === item.path
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground dark:text-muted-foreground hover:bg-accent dark:hover:bg-accent hover:text-accent-foreground dark:hover:text-accent-foreground"
                 )}
                 data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setLocation(item.path);
+                  }
+                }}
               >
                 <i className={`${item.icon} w-4 h-4`}></i>
                 <span>{item.label}</span>
-              </Link>
+              </div>
             ))}
           </div>
         </div>
