@@ -33,8 +33,29 @@ export default function Sidebar() {
       <nav className="px-4 pb-4">
         <div className="space-y-1">
           {navItems.map((item) => (
-            <Link key={item.path} href={item.path}>
-              <a
+            <Link 
+              key={item.path} 
+              href={item.path}
+              className={cn(
+                "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all",
+                location === item.path
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground dark:text-muted-foreground hover:bg-accent dark:hover:bg-accent hover:text-accent-foreground dark:hover:text-accent-foreground"
+              )}
+              data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
+            >
+              <i className={`${item.icon} w-4 h-4`}></i>
+              <span>{item.label}</span>
+            </Link>
+          ))}
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-border dark:border-border">
+          <div className="space-y-1">
+            {bottomNavItems.map((item) => (
+              <Link 
+                key={item.path} 
+                href={item.path}
                 className={cn(
                   "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all",
                   location === item.path
@@ -45,27 +66,6 @@ export default function Sidebar() {
               >
                 <i className={`${item.icon} w-4 h-4`}></i>
                 <span>{item.label}</span>
-              </a>
-            </Link>
-          ))}
-        </div>
-
-        <div className="mt-8 pt-6 border-t border-border dark:border-border">
-          <div className="space-y-1">
-            {bottomNavItems.map((item) => (
-              <Link key={item.path} href={item.path}>
-                <a
-                  className={cn(
-                    "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all",
-                    location === item.path
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground dark:text-muted-foreground hover:bg-accent dark:hover:bg-accent hover:text-accent-foreground dark:hover:text-accent-foreground"
-                  )}
-                  data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
-                >
-                  <i className={`${item.icon} w-4 h-4`}></i>
-                  <span>{item.label}</span>
-                </a>
               </Link>
             ))}
           </div>
