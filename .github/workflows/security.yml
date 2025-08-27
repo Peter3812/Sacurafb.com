@@ -1,0 +1,235 @@
+name: 🔒 Security & Vulnerability Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  # 🔍 Dependency Vulnerability Scanning
+  dependency-scan:
+    name: 🔍 Dependency Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔒 NPM Audit
+        run: |
+          npm audit --audit-level=moderate --json > npm-audit.json || true
+          npm audit --audit-level=moderate
+
+      - name: 🔍 Snyk Security Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+        continue-on-error: true
+
+      - name: 📤 Upload Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-${{ github.run_number }}
+          path: |
+            npm-audit.json
+            snyk-report.json
+          retention-days: 30
+
+  # 🛡️ Code Security Analysis
+  code-security:
+    name: 🛡️ Code Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript
+
+      - name: 🏗️ Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: 🔍 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+
+  # 🔐 Secret Scanning
+  secret-scan:
+    name: 🔐 Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔐 TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # 🌐 Infrastructure Security
+  infrastructure-scan:
+    name: 🌐 Infrastructure Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Terraform Security Scan
+        if: hashFiles('**/*.tf') != ''
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 🐳 Docker Security Scan
+        if: hashFiles('**/Dockerfile') != ''
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-docker.sarif'
+
+      - name: 📤 Upload Trivy Results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # 🚨 Security Notifications
+  security-notifications:
+    name: 🚨 Security Notifications
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, code-security, secret-scan, infrastructure-scan]
+    if: failure()
+    steps:
+      - name: 🚨 Security Alert
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{
+                \"text\": \"🚨 SECURITY ALERT: Vulnerabilities detected in Sacurafb.com!\",
+                \"blocks\": [
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🛡️ Security Scan Results*\n\nSecurity vulnerabilities have been detected in the Sacurafb.com repository. Please review and address immediately.\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Repository:*\nSacurafb.com\"
+                      },
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Branch:*\n${{ github.ref_name }}\"
+                      },
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Commit:*\n${{ github.sha }}\"
+                      },
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Scan Time:*\n$(date -u)\"
+                      }
+                    ]
+                  },
+                  {
+                    \"type\": \"actions\",
+                    \"elements\": [
+                      {
+                        \"type\": \"button\",
+                        \"text\": {
+                          \"type\": \"plain_text\",
+                          \"text\": \"View Security Report\"
+                        },
+                        \"url\": \"https://github.com/${{ github.repository }}/security\"
+                      },
+                      {
+                        \"type\": \"button\",
+                        \"text\": {
+                          \"type\": \"plain_text\",
+                          \"text\": \"View Workflow\"
+                        },
+                        \"url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                      }
+                    ]
+                  }
+                ]
+              }" \
+              "$SLACK_WEBHOOK_URL"
+          fi
+
+      - name: 📧 Create Security Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Security Vulnerabilities Detected - ${new Date().toISOString().split('T')[0]}`;
+            const body = `## 🛡️ Security Alert
+            
+            Security vulnerabilities have been detected during automated scanning of the Sacurafb.com repository.
+            
+            **Scan Details:**
+            - Branch: ${{ github.ref_name }}
+            - Commit: ${{ github.sha }}
+            - Workflow: ${{ github.workflow }}
+            - Run ID: ${{ github.run_id }}
+            
+            **Action Required:**
+            1. Review the [security tab](https://github.com/${{ github.repository }}/security) for detailed findings
+            2. Check the [workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            3. Address high and critical severity vulnerabilities immediately
+            4. Update dependencies and fix code issues as needed
+            5. Re-run security scans to verify fixes
+            
+            **Security Best Practices:**
+            - Keep dependencies up to date
+            - Review code changes for security implications
+            - Use environment variables for sensitive data
+            - Implement proper input validation
+            - Follow OWASP security guidelines
+            
+            cc: @security-team`;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['security', 'high-priority', 'vulnerability']
+            });

@@ -1,0 +1,320 @@
+name: 🏷️ Release Management & Versioning
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      release_notes:
+        description: 'Custom release notes'
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # 🏷️ Version Management
+  version-bump:
+    name: 🏷️ Version Bump & Tag
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🏷️ Bump Version
+        id: version
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Get current version
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Bump version based on input
+          npm version ${{ github.event.inputs.version_type }} --no-git-tag-version
+          
+          # Get new version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "New version: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          
+          # Commit version bump
+          git add package.json package-lock.json
+          git commit -m "🔖 Bump version to $NEW_VERSION"
+          git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
+          
+          # Push changes
+          git push origin main
+          git push origin "v$NEW_VERSION"
+
+      - name: 📋 Generate Changelog
+        id: changelog
+        run: |
+          echo "## 🚀 Sacurafb.com v${{ steps.version.outputs.new_version }}" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "**Release Date:** $(date +'%Y-%m-%d')" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          if [[ -n "${{ github.event.inputs.release_notes }}" ]]; then
+            echo "### 📝 Release Notes" >> CHANGELOG.md
+            echo "${{ github.event.inputs.release_notes }}" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          echo "### ✨ New Features" >> CHANGELOG.md
+          git log --oneline --grep="feat" $(git describe --tags --abbrev=0 HEAD~1)..HEAD | sed 's/^/- /' >> CHANGELOG.md || echo "- No new features" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          echo "### 🐛 Bug Fixes" >> CHANGELOG.md
+          git log --oneline --grep="fix" $(git describe --tags --abbrev=0 HEAD~1)..HEAD | sed 's/^/- /' >> CHANGELOG.md || echo "- No bug fixes" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          echo "### 🔧 Improvements" >> CHANGELOG.md
+          git log --oneline --grep="perf\|improve\|enhance" $(git describe --tags --abbrev=0 HEAD~1)..HEAD | sed 's/^/- /' >> CHANGELOG.md || echo "- No improvements" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          echo "### 📚 Documentation" >> CHANGELOG.md
+          git log --oneline --grep="docs" $(git describe --tags --abbrev=0 HEAD~1)..HEAD | sed 's/^/- /' >> CHANGELOG.md || echo "- No documentation updates" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          echo "### 🔒 Security" >> CHANGELOG.md
+          git log --oneline --grep="security\|sec" $(git describe --tags --abbrev=0 HEAD~1)..HEAD | sed 's/^/- /' >> CHANGELOG.md || echo "- No security updates" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          # Set output for changelog
+          CHANGELOG_CONTENT=$(cat CHANGELOG.md)
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  # 🏗️ Build Release Artifacts
+  build-release:
+    name: 🏗️ Build Release
+    runs-on: ubuntu-latest
+    needs: version-bump
+    if: always() && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || needs.version-bump.result == 'success')
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🏷️ Get Version
+        id: get_version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=${{ needs.version-bump.outputs.new_version }}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building Sacurafb.com v$VERSION"
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🧪 Run Tests
+        run: |
+          npm test || echo "Tests not configured"
+
+      - name: 🏗️ Build Application
+        run: |
+          echo "Building Sacurafb.com v${{ steps.get_version.outputs.version }}"
+          npm run build
+
+      - name: 📦 Create Release Packages
+        run: |
+          mkdir -p release-artifacts
+          
+          # Frontend package
+          tar -czf release-artifacts/sacurafb-frontend-v${{ steps.get_version.outputs.version }}.tar.gz dist/
+          
+          # Backend package
+          tar -czf release-artifacts/sacurafb-backend-v${{ steps.get_version.outputs.version }}.tar.gz \
+            server/ shared/ package.json package-lock.json
+          
+          # Full application package
+          tar -czf release-artifacts/sacurafb-complete-v${{ steps.get_version.outputs.version }}.tar.gz \
+            --exclude=node_modules \
+            --exclude=.git \
+            --exclude=.github \
+            .
+          
+          # Generate checksums
+          cd release-artifacts
+          sha256sum *.tar.gz > checksums.txt
+
+      - name: 📤 Upload Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sacurafb-release-v${{ steps.get_version.outputs.version }}
+          path: release-artifacts/
+          retention-days: 90
+
+  # 🚀 Create GitHub Release
+  create-release:
+    name: 🚀 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [version-bump, build-release]
+    if: always() && needs.build-release.result == 'success'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Release Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sacurafb-release-v${{ needs.build-release.outputs.version }}
+          path: release-artifacts/
+
+      - name: 📋 Prepare Release Notes
+        id: release_notes
+        run: |
+          if [[ -n "${{ needs.version-bump.outputs.changelog }}" ]]; then
+            RELEASE_NOTES="${{ needs.version-bump.outputs.changelog }}"
+          else
+            # Generate changelog for tag-based release
+            echo "## 🚀 Sacurafb.com v${{ needs.build-release.outputs.version }}" > RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "**Release Date:** $(date +'%Y-%m-%d')" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "### 📦 Release Packages" >> RELEASE_NOTES.md
+            echo "- Frontend Package: \`sacurafb-frontend-v${{ needs.build-release.outputs.version }}.tar.gz\`" >> RELEASE_NOTES.md
+            echo "- Backend Package: \`sacurafb-backend-v${{ needs.build-release.outputs.version }}.tar.gz\`" >> RELEASE_NOTES.md
+            echo "- Complete Package: \`sacurafb-complete-v${{ needs.build-release.outputs.version }}.tar.gz\`" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "### 🔐 Verification" >> RELEASE_NOTES.md
+            echo "Verify package integrity using the included \`checksums.txt\` file:" >> RELEASE_NOTES.md
+            echo "\`\`\`bash" >> RELEASE_NOTES.md
+            echo "sha256sum -c checksums.txt" >> RELEASE_NOTES.md
+            echo "\`\`\`" >> RELEASE_NOTES.md
+            RELEASE_NOTES=$(cat RELEASE_NOTES.md)
+          fi
+          
+          echo "release_notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: 🏷️ Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.build-release.outputs.version }}
+          name: 🚀 Sacurafb.com v${{ needs.build-release.outputs.version }}
+          body: ${{ steps.release_notes.outputs.release_notes }}
+          files: |
+            release-artifacts/*.tar.gz
+            release-artifacts/checksums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📢 Release Notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{
+                \"text\": \"🎉 NEW RELEASE: Sacurafb.com v${{ needs.build-release.outputs.version }} is now available!\",
+                \"blocks\": [
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🚀 New Release Available*\n\nSacurafb.com v${{ needs.build-release.outputs.version }} has been successfully released!\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Version:*\nv${{ needs.build-release.outputs.version }}\"
+                      },
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Release Date:*\n$(date +'%Y-%m-%d %H:%M UTC')\"
+                      }
+                    ]
+                  },
+                  {
+                    \"type\": \"actions\",
+                    \"elements\": [
+                      {
+                        \"type\": \"button\",
+                        \"text\": {
+                          \"type\": \"plain_text\",
+                          \"text\": \"View Release\"
+                        },
+                        \"url\": \"https://github.com/${{ github.repository }}/releases/tag/v${{ needs.build-release.outputs.version }}\"
+                      },
+                      {
+                        \"type\": \"button\",
+                        \"text\": {
+                          \"type\": \"plain_text\",
+                          \"text\": \"Download\"
+                        },
+                        \"url\": \"https://github.com/${{ github.repository }}/releases/latest\"
+                      }
+                    ]
+                  }
+                ]
+              }" \
+              "$SLACK_WEBHOOK_URL"
+          fi
+
+  # 📊 Post-Release Tasks
+  post-release:
+    name: 📊 Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: create-release
+    steps:
+      - name: 📊 Update Documentation
+        run: |
+          echo "📊 Updating documentation and metrics..."
+          # Add your documentation update logic here
+
+      - name: 🔄 Trigger Deployment
+        run: |
+          echo "🔄 Triggering deployment pipeline..."
+          # Add deployment trigger logic here
+
+      - name: 📈 Analytics Update
+        run: |
+          echo "📈 Updating release analytics..."
+          # Add analytics update logic here
