@@ -22,6 +22,24 @@ if (process.env.STRIPE_SECRET_KEY) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Add health check endpoint
+  app.get('/health', (req, res) => {
+    res.status(200).json({
+      ok: true,
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'development'
+    });
+  });
+
+  // Add Prometheus metrics endpoint
+  app.get('/metrics', async (req, res) => {
+    const promClient = (await import('prom-client')).default;
+    res.set('Content-Type', promClient.register.contentType);
+    const metrics = await promClient.register.metrics();
+    res.end(metrics);
+  });
+
   // Auth middleware
   await setupAuth(app);
 
