@@ -1,0 +1,201 @@
+You are a senior platform engineer and release manager. DO NOT rebuild or change stacks. We already have a fully working **Node.js/Express backend + React frontend** with 22 API endpoints, 12 pages, PostgreSQL (7 tables), Multi-AI (GPT-5/Claude/Perplexity), Facebook Graph publishing, Stripe billing, and Replit OIDC auth. 
+
+Your task: **prepare THIS existing app for production**. 
+Principles: 
+- Non-destructive: keep code, endpoints, DB schema, migrations, and UI intact. 
+- Add production layers, not rewrites. 
+- Infer & integrate gently: if a feature already exists, enhance; if missing, add.
+
+────────────────────────────────────────────────────────────────────────
+0) WORKFLOW & OUTPUTS
+- Create a new branch `launch-hardening` and work there. 
+- Generate artifacts, docs, and scripts under /ops, /infra, /docs without touching business logic. 
+- At the end, run smoke tests and output **LAUNCH_REPORT.md** at repo root.
+- If something is ambiguous, auto-discover by reading the code (routes, envs, scripts) and choose safe defaults.
+
+────────────────────────────────────────────────────────────────────────
+1) REPO AUGMENTATION (non-destructive)
+- Keep existing structure. Add:
+  /ops/ci/                     # GitHub Actions
+  /ops/scripts/                # backups, smoke, load
+  /ops/kb/                     # knowledge base docs
+  /ops/emails/                 # lifecycle emails
+  /infra/docker/               # Dockerfiles, docker-compose.local.yml
+  /infra/cloudflare/           # WAF & CSP notes
+  /infra/grafana/              # dashboard.json
+  /docs/                       # PRD short, Launch checklist
+  .env.example                 # expanded env template (no real secrets)
+
+────────────────────────────────────────────────────────────────────────
+2) ENV & SECRETS (expand .env.example; DO NOT add real secrets)
+APP_ENV=production
+API_BASE_URL=https://api.fbpro.ai
+FRONTEND_BASE_URL=https://app.fbpro.ai
+CORS_ALLOWED_ORIGINS=https://app.fbpro.ai
+
+# Auth (preserve current Replit OIDC flows; do NOT refactor)
+REPLIT_OIDC_ISSUER=REQUIRED
+REPLIT_OIDC_CLIENT_ID=REQUIRED
+REPLIT_OIDC_CLIENT_SECRET=REQUIRED
+SESSION_SECRET=REQUIRED
+JWT_SECRET=REQUIRED
+OAUTH_REDIRECT_URL=https://app.fbpro.ai/auth/callback
+
+# Facebook / Meta
+META_APP_ID=REQUIRED
+META_APP_SECRET=REQUIRED
+META_WEBHOOK_VERIFY_TOKEN=REQUIRED
+META_GRAPH_VERSION=v20.0
+
+# AI
+OPENAI_API_KEY=REQUIRED
+ANTHROPIC_API_KEY=REQUIRED
+PERPLEXITY_API_KEY=REQUIRED
+
+# MCP (only used if existing code doesn’t already define)
+MCP_SERVICE_TOKEN=REQUIRED
+MCP_ADS_LIBRARY_URL=https://mcp.fbpro.ai/library
+MCP_META_ADS_URL=https://mcp.fbpro.ai/meta
+MCP_10XER_URL=https://mcp.fbpro.ai/10xer
+
+# DB / Cache / Storage
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DB
+REDIS_URL=rediss://REQUIRED
+CLOUDINARY_URL=cloudinary://REQUIRED
+
+# Stripe
+STRIPE_SECRET_KEY=sk_live_REQUIRED
+STRIPE_PUBLISHABLE_KEY=pk_live_REQUIRED
+STRIPE_PRICE_STARTER=price_REQUIRED
+STRIPE_PRICE_PRO=price_REQUIRED
+STRIPE_PRICE_BUSINESS=price_REQUIRED
+STRIPE_PRICE_ENTERPRISE=price_REQUIRED
+STRIPE_WEBHOOK_SECRET=whsec_REQUIRED
+
+# Observability
+SENTRY_DSN=https://REQUIRED
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com
+LOG_LEVEL=info
+
+────────────────────────────────────────────────────────────────────────
+3) BACKEND HARDENING (Node/Express ONLY; keep endpoints as-is)
+- Add or confirm: helmet, cors (whitelist FRONTEND_BASE_URL), compression, express-rate-limit (100 rpm/IP defaults), body size limit (2–5MB), express-async-errors.
+- Add **/health** (200 + {ok:true, ts}), if missing.
+- Add **/metrics** using **prom-client** (req/sec, p95 latency, 5xx rate, AI token errors, queue depth). 
+- Add **pino** + **pino-http** structured logging, redact PII, log sampling in production.
+- Integrate **Sentry** (@sentry/node) server SDK with release version from git SHA; trace middleware.
+- Stripe webhook route: ensure idempotency (event id store) + retry/backoff; do NOT change plan logic.
+- If MCP clients not present:
+  - Add small client wrappers using **node-fetch/http(s)** or **axios** with Bearer ${MCP_SERVICE_TOKEN}, 15s timeout+retries.
+  - Add proxy endpoints that simply forward to existing app’s conventions:
+    GET /ads/competitors/search?q= → MCP_ADS_LIBRARY_URL/search
+    GET /ads/campaigns/:id       → MCP_META_ADS_URL/campaigns/:id
+- Preserve Replit OIDC auth middleware; just add secure cookie flags in production.
+- DO NOT modify DB schema; only add safe indexes if obvious (create separate migration file but do not auto-apply).
+
+Packages to add (if missing): helmet, cors, compression, express-rate-limit, prom-client, pino, pino-http, @sentry/node, axios (or use existing http client).
+
+────────────────────────────────────────────────────────────────────────
+4) FRONTEND AUGMENTATION (React ONLY; do not rebuild)
+- Add Sentry browser SDK (DSN from env) with release version and performance monitoring.
+- Add Lighthouse CI config (targets: Performance ≥90, Accessibility ≥90).
+- Add Axe CI script for a11y.
+- Ensure CSP compatibility (document example CSP in /infra/cloudflare/CSP.md).
+- Keep all pages/routes intact.
+
+────────────────────────────────────────────────────────────────────────
+5) DOCKER & LOCAL COMPOSE (no business logic changes)
+/infra/docker/api.Dockerfile  (Node 20-alpine)
+- Detect package manager (npm/yarn/pnpm); install, build, run `npm run start:prod` (or existing prod start).
+- Expose 8080
+
+/infra/docker/docker-compose.local.yml
+- api + postgres + redis (if app uses redis); map 8080:8080; mount env file for local dev.
+
+────────────────────────────────────────────────────────────────────────
+6) CI/CD (GitHub Actions + Koyeb + Vercel notes)
+/ops/ci/deploy-api.yml
+- On push:main → install deps → run tests/lint → build Docker → push GHCR (use GHCR_TOKEN) → redeploy Koyeb service `fbpro-api` (KOYEB_TOKEN). 
+- Print image tag and deployment URL.
+/docs/VERCEL_NOTES.md
+- Steps to connect frontend to Vercel and set envs.
+
+────────────────────────────────────────────────────────────────────────
+7) WAF & SECURITY RUNBOOK (docs only; no refactor)
+/infra/cloudflare/WAF.md
+- Cloudflare proxy both `app.fbpro.ai` and `api.fbpro.ai`.
+- Rate limits: /api/* 60 rpm/IP; /auth/* 30 rpm/IP.
+- Bot Fight Mode, firewall ASN blocks, optional geo rules.
+- Example **CSP** suited for React + Stripe + Cloudinary:
+  default-src 'self';
+  img-src 'self' data: https://res.cloudinary.com;
+  script-src 'self' https://js.stripe.com https://*.vercel.app;
+  connect-src 'self' https://api.fbpro.ai;
+  frame-src https://js.stripe.com;
+
+────────────────────────────────────────────────────────────────────────
+8) OBSERVABILITY & ALERTS
+- Add Sentry (server+client).
+- Expose /metrics (prom-client).
+- Provide **Grafana dashboard JSON** in /infra/grafana/dashboard.json with panels: req/sec, p95, 5xx rate, AI errors, queue depth.
+- Add UptimeRobot instructions for /health with thresholds:
+  - http_req_failed >1% over 5m → alert
+  - p95 >800ms over 10m → warn
+  - AI token error rate >2% → alert
+  - DB CPU >80% over 10m → scale up
+
+────────────────────────────────────────────────────────────────────────
+9) BACKUP & DR
+/ops/scripts/backup.sh
+- pg_dump to S3 (AES256); prune policy: daily(7), weekly(4), monthly(6).
+/ops/ci/nightly-backup.yml
+- Cron 03:00 UTC to run backup.sh with repo/environment secrets.
+/docs/RESTORE.md
+- Step-by-step restore rehearsal.
+
+────────────────────────────────────────────────────────────────────────
+10) TESTING & SMOKE
+/ops/scripts/smoke.sh
+- curl GET /health == 200
+- Discover an auth-protected GET route by scanning routes; hit it with a test token/session.
+- Create the lightest non-destructive call (e.g., list pages or drafts).
+- Trigger Stripe test checkout (if sandbox keys present) and validate webhook receipt.
+- Call MCP proxy (or mock) once; expect 200 JSON.
+
+Load test: /ops/scripts/load-k6.js
+- 200 VUs, 10m, thresholds: http_req_failed <1%, p(95)<800ms.
+
+Lighthouse CI + Axe configured in frontend package.json scripts.
+
+────────────────────────────────────────────────────────────────────────
+11) BILLING POLISH (NON-DESTRUCTIVE)
+- Keep existing Stripe integration.
+- Add webhook idempotency store if missing (event_id unique).
+- Add dunning plan docs + email templates (Day 0/3/7, downgrade at Day 14) in /ops/emails/.
+
+────────────────────────────────────────────────────────────────────────
+12) DOCS & GTM
+/docs/PRD_short.md                # short PRD pointer to full
+/docs/LAUNCH_CHECKLIST.md         # summarized checklist
+/ops/kb/*.md                      # 7-section knowledge base (Getting started, Connect FB, AI content & scheduling, Messenger bot, Billing, Troubleshooting, Privacy & data)
+/ops/emails/{welcome.md,activation_day2.md,upsell_day7.md,churn_save.md}
+/README.md updates for local dev & deployment
+
+────────────────────────────────────────────────────────────────────────
+13) ACCEPTANCE & REPORT
+- Run unit/integration tests (do not modify them; add if missing without breaking).
+- Run smoke.sh and load-k6.js (skip load test if k6 unavailable; note in report).
+- Generate **/infra/grafana/dashboard.json** and **/infra/cloudflare/WAF.md**.
+- Produce **LAUNCH_REPORT.md** including:
+  • what changed (files added),
+  • how to set envs,
+  • deploy steps (Koyeb API, Vercel),
+  • Cloudflare/WAF checklist,
+  • Stripe webhook/idempotency summary,
+  • smoke and (if run) load test results,
+  • rollback plan (redeploy previous image tag),
+  • next steps (index suggestions, cache headers).
+
+If everything passes, print:
+=== LAUNCH_READY (Node/Express/React preserved) ===
+Artifacts: LAUNCH_REPORT.md, /ops, /infra, /docs

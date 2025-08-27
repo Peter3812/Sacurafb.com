@@ -1,10 +1,124 @@
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
+import compression from "compression";
+import rateLimit from "express-rate-limit";
+import "express-async-errors";
+import * as Sentry from "@sentry/node";
+import { nodeProfilingIntegration } from "@sentry/profiling-node";
+import pino from "pino";
+import pinoHttp from "pino-http";
+import promClient from "prom-client";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
+// Initialize Sentry for error tracking and performance monitoring
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [
+      nodeProfilingIntegration(),
+      Sentry.httpIntegration(),
+      Sentry.expressIntegration(),
+    ],
+    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
+    profilesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
+    environment: process.env.NODE_ENV || "development",
+    release: process.env.GIT_SHA || "development",
+  });
+}
+
+// Initialize Prometheus metrics
+const httpRequestsTotal = new promClient.Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status_code'],
+});
+
+const httpRequestDuration = new promClient.Histogram({
+  name: 'http_request_duration_ms',
+  help: 'Duration of HTTP requests in ms',
+  labelNames: ['method', 'route'],
+  buckets: [0.1, 5, 15, 50, 100, 500, 1000, 5000],
+});
+
+const aiRequestsTotal = new promClient.Counter({
+  name: 'ai_requests_total',
+  help: 'Total number of AI API requests',
+  labelNames: ['provider', 'model', 'status'],
+});
+
+// Collect default Node.js metrics
+promClient.collectDefaultMetrics();
+
+// Initialize structured logging
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  redact: ['req.headers.authorization', 'req.headers.cookie', 'password', 'email'],
+  ...(process.env.NODE_ENV === "production" && {
+    timestamp: pino.stdTimeFunctions.isoTime,
+    formatters: {
+      level: (label) => {
+        return { level: label };
+      },
+    },
+  }),
+});
+
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+
+// Production security and performance middleware
+if (process.env.NODE_ENV === "production") {
+  // Security headers
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "https:", "blob:"],
+        scriptSrc: ["'self'", "https://js.stripe.com"],
+        connectSrc: ["'self'", "https://api.stripe.com"],
+        frameSrc: ["'self'", "https://js.stripe.com"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }));
+
+  // Compression for better performance
+  app.use(compression());
+
+  // Rate limiting
+  app.use(rateLimit({
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"),
+    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100"),
+    message: { error: "Too many requests, please try again later" },
+    standardHeaders: true,
+    legacyHeaders: false,
+  }));
+}
+
+// CORS handling (will be enhanced in routes for production)
+app.use(express.json({ limit: process.env.BODY_SIZE_LIMIT || "5mb" }));
+app.use(express.urlencoded({ extended: false, limit: process.env.BODY_SIZE_LIMIT || "5mb" }));
+
+// Request logging with pino
+app.use(pinoHttp({ logger }));
+
+// Prometheus metrics collection middleware
+app.use((req, res, next) => {
+  const end = httpRequestDuration.startTimer({ method: req.method, route: req.route?.path || req.path });
+  
+  res.on('finish', () => {
+    end();
+    httpRequestsTotal.inc({ 
+      method: req.method, 
+      route: req.route?.path || req.path,
+      status_code: res.statusCode.toString()
+    });
+  });
+  
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();
