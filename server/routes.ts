@@ -10,7 +10,8 @@ import {
 } from "@shared/schema";
 import { generateContent, generateImageContent } from "./services/openai";
 import { facebookService } from "./services/facebook";
-import { aiManager } from "./services/ai-manager";
+import { aiManager, type AIModel } from "./services/ai-manager";
+import { facebookOAuth } from "./services/facebook-oauth";
 import Stripe from "stripe";
 
 // Initialize Stripe if keys are provided
@@ -171,7 +172,97 @@ Ready to scale your content strategy? Let's connect!
     }
   });
 
-  // Connect Facebook pages via access token
+  // Facebook OAuth - Initiate Connection (NEW SEAMLESS FLOW)
+  app.get('/api/facebook/connect', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const authUrl = facebookOAuth.generateAuthUrl(userId);
+      res.json({ authUrl });
+    } catch (error) {
+      console.error("Error generating Facebook auth URL:", error);
+      res.status(500).json({ message: "Failed to generate authorization URL" });
+    }
+  });
+
+  // Facebook OAuth - Handle Callback (NEW SEAMLESS FLOW)
+  app.get('/api/facebook/callback', async (req, res) => {
+    try {
+      const { code, state, error, error_description } = req.query;
+
+      if (error) {
+        console.error("Facebook OAuth error:", error, error_description);
+        return res.redirect(`/?error=facebook_auth_failed&description=${encodeURIComponent(error_description as string || 'Authorization failed')}`);
+      }
+
+      if (!code || !state) {
+        return res.redirect('/?error=missing_authorization_code');
+      }
+
+      // Exchange code for access token
+      const tokenResponse = await facebookOAuth.exchangeCodeForToken(code as string);
+      
+      // Get long-lived token (60 days)
+      const longLivedToken = await facebookOAuth.getLongLivedToken(tokenResponse.access_token);
+      
+      // Validate token and get user info
+      const userInfo = await facebookOAuth.validateTokenAndGetUser(longLivedToken.access_token);
+      
+      // Get user's Facebook pages with enhanced data
+      const facebookPages = await facebookOAuth.getUserPages(longLivedToken.access_token);
+      
+      if (facebookPages.length === 0) {
+        return res.redirect('/?error=no_facebook_pages&description=No Facebook pages found with management permissions');
+      }
+
+      // Save pages to database
+      const userId = state as string;
+      const savedPages = [];
+      
+      for (const fbPage of facebookPages) {
+        const pageData = {
+          userId,
+          facebookPageId: fbPage.id,
+          name: fbPage.name,
+          profileImageUrl: fbPage.profile_picture_url || null,
+          followers: fbPage.followers_count || 0,
+          accessToken: fbPage.access_token,
+          isActive: true,
+        };
+
+        try {
+          const savedPage = await storage.createFacebookPage(pageData);
+          savedPages.push(savedPage);
+        } catch (error: any) {
+          // Page might already exist, update it
+          if (error.message?.includes('duplicate') || error.message?.includes('unique')) {
+            console.log(`Page ${fbPage.name} already exists, updating...`);
+            const existingPages = await storage.getFacebookPages(userId);
+            const existingPage = existingPages.find(p => p.facebookPageId === fbPage.id);
+            if (existingPage) {
+              const updatedPage = await storage.updateFacebookPage(existingPage.id, {
+                name: fbPage.name,
+                profileImageUrl: fbPage.profile_picture_url || null,
+                followers: fbPage.followers_count || 0,
+                accessToken: fbPage.access_token,
+                isActive: true,
+              });
+              savedPages.push(updatedPage);
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      // Redirect to success page with count
+      res.redirect(`/?facebook_connect=success&pages=${savedPages.length}`);
+    } catch (error) {
+      console.error("Error in Facebook OAuth callback:", error);
+      res.redirect(`/?error=facebook_connection_failed&description=${encodeURIComponent((error as Error).message)}`);
+    }
+  });
+
+  // Connect Facebook pages via access token (LEGACY - Keep for backwards compatibility)
   app.post('/api/facebook-pages/connect', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -649,12 +740,12 @@ ${bot.fallbackMessage ? `Use this as fallback when confused: "${bot.fallbackMess
       try {
         if (aiModel === 'gpt-5') {
           // Use the existing AI manager service
-          const aiResponse_result = await aiManager.generateResponse(
-            messages.map(msg => msg.content).join('\n'),
-            aiModel,
-            500
-          );
-          aiResponse = aiResponse_result;
+          const aiResponse_result = await aiManager.generateContent({
+            prompt: messages.map(msg => msg.content).join('\n'),
+            contentType: 'post',
+            model: aiModel as AIModel
+          });
+          aiResponse = aiResponse_result.content;
         } else {
           // For other models (Claude, Perplexity), use a simulated response for now
           aiResponse = `AI Response (${aiModel}): Thank you for your message "${message}". This is an intelligent response generated specifically for ${page.name}. I understand your inquiry and I'm here to help you with any questions or assistance you need. Each response is dynamically generated based on our conversation context.`;
@@ -709,7 +800,7 @@ ${bot.fallbackMessage ? `Use this as fallback when confused: "${bot.fallbackMess
             botId: bot.id,
             questionPattern: message,
             bestResponse: aiResponse,
-            responseQuality: Math.random() * 2 + 3, // 3-5 quality score
+            responseQuality: (Math.random() * 2 + 3).toString(), // 3-5 quality score
             usageCount: 1,
             lastUsed: new Date(),
             contextKeywords: [page.name.toLowerCase(), 'customer_service'],
