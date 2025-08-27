@@ -23,6 +23,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
+  // Demo/Test endpoints (no auth required for testing)
+  app.post('/api/demo/generate-content', async (req, res) => {
+    try {
+      const { prompt, contentType = "post", includeImage = false } = req.body;
+      
+      if (!prompt) {
+        return res.status(400).json({ message: "Prompt is required" });
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ message: "OpenAI API key not configured" });
+      }
+
+      let generatedText: string;
+      let imageUrl: string | null = null;
+
+      // Generate text content
+      generatedText = await generateContent(prompt, contentType);
+
+      // Generate image if requested
+      if (includeImage) {
+        try {
+          const imagePrompt = `Create a social media image for: ${generatedText.substring(0, 100)}...`;
+          const imageResult = await generateImageContent(imagePrompt);
+          imageUrl = imageResult.url;
+        } catch (imageError) {
+          console.warn("Failed to generate image:", imageError);
+          // Continue without image
+        }
+      }
+
+      res.json({
+        content: generatedText,
+        imageUrl,
+        contentType,
+        aiModel: "gpt-5",
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("Error in demo content generation:", error);
+      res.status(500).json({ message: "Failed to generate content" });
+    }
+  });
+
+  app.get('/api/demo/health', (req, res) => {
+    res.json({
+      status: "healthy",
+      database: "connected",
+      openai: process.env.OPENAI_API_KEY ? "configured" : "missing",
+      stripe: process.env.STRIPE_SECRET_KEY ? "configured" : "missing",
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
