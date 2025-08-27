@@ -15,6 +15,7 @@ import Analytics from "@/pages/analytics";
 import AdIntelligence from "@/pages/ad-intelligence";
 import Billing from "@/pages/billing";
 import Settings from "@/pages/settings";
+import FacebookConnect from "@/pages/facebook-connect";
 import Layout from "@/components/layout";
 import { DemoContentTest } from "@/components/demo-content-test";
 
@@ -34,6 +35,7 @@ function Router() {
           <Route path="/content" component={ContentGenerator} />
           <Route path="/scheduler" component={Scheduler} />
           <Route path="/facebook-pages" component={FacebookPages} />
+          <Route path="/facebook-connect" component={FacebookConnect} />
           <Route path="/messenger-bot" component={MessengerBot} />
           <Route path="/analytics" component={Analytics} />
           <Route path="/ad-intelligence" component={AdIntelligence} />

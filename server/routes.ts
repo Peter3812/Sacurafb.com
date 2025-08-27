@@ -9,6 +9,8 @@ import {
   insertAnalyticsSchema,
 } from "@shared/schema";
 import { generateContent, generateImageContent } from "./services/openai";
+import { facebookService } from "./services/facebook";
+import { aiManager } from "./services/ai-manager";
 import Stripe from "stripe";
 
 // Initialize Stripe if keys are provided
@@ -151,6 +153,269 @@ Ready to scale your content strategy? Let's connect!
     }
   });
 
+  // Connect Facebook pages via access token
+  app.post('/api/facebook-pages/connect', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { accessToken } = req.body;
+
+      if (!accessToken) {
+        return res.status(400).json({ message: "Facebook access token is required" });
+      }
+
+      // Validate the access token
+      const validation = await facebookService.validateAccessToken(accessToken);
+      if (!validation.isValid) {
+        return res.status(400).json({ message: "Invalid Facebook access token" });
+      }
+
+      // Get user's Facebook pages
+      const facebookPages = await facebookService.getUserPages(accessToken);
+      
+      if (facebookPages.length === 0) {
+        return res.status(400).json({ message: "No Facebook pages found or insufficient permissions" });
+      }
+
+      // Save pages to database
+      const savedPages = [];
+      for (const fbPage of facebookPages) {
+        const pageData = {
+          userId,
+          facebookPageId: fbPage.id,
+          name: fbPage.name,
+          profileImageUrl: fbPage.profile_picture_url || null,
+          followers: fbPage.followers_count || 0,
+          accessToken: fbPage.access_token,
+          isActive: true,
+        };
+
+        try {
+          const savedPage = await storage.createFacebookPage(pageData);
+          savedPages.push(savedPage);
+        } catch (error: any) {
+          // Page might already exist, try to update it
+          if (error.message?.includes('duplicate') || error.message?.includes('unique')) {
+            console.log(`Page ${fbPage.name} already exists, updating...`);
+            // Find existing page and update
+            const existingPages = await storage.getFacebookPages(userId);
+            const existingPage = existingPages.find(p => p.facebookPageId === fbPage.id);
+            if (existingPage) {
+              const updatedPage = await storage.updateFacebookPage(existingPage.id, {
+                name: fbPage.name,
+                profileImageUrl: fbPage.profile_picture_url || null,
+                followers: fbPage.followers_count || 0,
+                accessToken: fbPage.access_token,
+                isActive: true,
+              });
+              savedPages.push(updatedPage);
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      res.json({ 
+        message: `Successfully connected ${savedPages.length} Facebook page(s)`,
+        pages: savedPages 
+      });
+    } catch (error) {
+      console.error("Error connecting Facebook pages:", error);
+      res.status(500).json({ message: "Failed to connect Facebook pages" });
+    }
+  });
+
+  // Publish content to Facebook
+  app.post('/api/facebook-pages/:pageId/publish', isAuthenticated, async (req: any, res) => {
+    try {
+      const { pageId } = req.params;
+      const { contentId, scheduleTime } = req.body;
+      const userId = req.user.claims.sub;
+
+      // Get the content to publish
+      const content = await storage.getGeneratedContentById(contentId);
+      if (!content || content.userId !== userId) {
+        return res.status(404).json({ message: "Content not found" });
+      }
+
+      // Get the Facebook page
+      const page = await storage.getFacebookPage(pageId);
+      if (!page || page.userId !== userId) {
+        return res.status(404).json({ message: "Facebook page not found" });
+      }
+
+      let publishResult;
+      const scheduledDate = scheduleTime ? new Date(scheduleTime) : undefined;
+
+      // Publish to Facebook
+      if (content.imageUrl) {
+        publishResult = await facebookService.publishImagePost(
+          page.facebookPageId,
+          page.accessToken,
+          content.content,
+          content.imageUrl,
+          scheduledDate
+        );
+      } else {
+        publishResult = await facebookService.publishTextPost(
+          page.facebookPageId,
+          page.accessToken,
+          content.content,
+          scheduledDate
+        );
+      }
+
+      // Update content status
+      const newStatus = scheduledDate ? 'scheduled' : 'published';
+      const updatedContent = await storage.updateGeneratedContent(contentId, {
+        status: newStatus,
+        publishedAt: scheduledDate ? null : new Date(),
+        scheduledAt: scheduledDate || null,
+      });
+
+      res.json({
+        message: `Content ${newStatus} successfully`,
+        content: updatedContent,
+        facebookPost: publishResult,
+      });
+    } catch (error) {
+      console.error("Error publishing to Facebook:", error);
+      res.status(500).json({ message: "Failed to publish to Facebook" });
+    }
+  });
+
+  // AI Model endpoints
+  app.get('/api/ai/models', (req, res) => {
+    try {
+      const models = aiManager.getAvailableModels();
+      res.json(models);
+    } catch (error) {
+      console.error("Error fetching AI models:", error);
+      res.status(500).json({ message: "Failed to fetch AI models" });
+    }
+  });
+
+  app.post('/api/ai/compare', isAuthenticated, async (req: any, res) => {
+    try {
+      const { prompt, contentType, style, includeResearch } = req.body;
+      
+      if (!prompt) {
+        return res.status(400).json({ message: "Prompt is required" });
+      }
+
+      const comparison = await aiManager.compareModels({
+        prompt,
+        contentType: contentType || 'post',
+        model: 'auto',
+        style,
+        includeResearch,
+      });
+
+      res.json(comparison);
+    } catch (error) {
+      console.error("Error comparing AI models:", error);
+      res.status(500).json({ message: "Failed to compare AI models" });
+    }
+  });
+
+  app.post('/api/ai/recommend', (req, res) => {
+    try {
+      const { prompt, contentType, style, includeResearch, targetAudience } = req.body;
+      
+      const recommendation = aiManager.getModelRecommendation({
+        prompt: prompt || '',
+        contentType: contentType || 'post',
+        model: 'auto',
+        style,
+        includeResearch,
+        targetAudience,
+      });
+
+      res.json(recommendation);
+    } catch (error) {
+      console.error("Error getting AI recommendation:", error);
+      res.status(500).json({ message: "Failed to get AI recommendation" });
+    }
+  });
+
+  // Sync page insights and engagement data
+  app.post('/api/facebook-pages/:pageId/sync', isAuthenticated, async (req: any, res) => {
+    try {
+      const { pageId } = req.params;
+      const userId = req.user.claims.sub;
+
+      // Get the Facebook page
+      const page = await storage.getFacebookPage(pageId);
+      if (!page || page.userId !== userId) {
+        return res.status(404).json({ message: "Facebook page not found" });
+      }
+
+      // Get page insights from Facebook
+      const insights = await facebookService.getPageInsights(page.facebookPageId, page.accessToken);
+      
+      // Get recent posts from Facebook
+      const recentPosts = await facebookService.getPagePosts(page.facebookPageId, page.accessToken, 10);
+
+      // Update page metrics
+      const updatedPage = await storage.updateFacebookPage(pageId, {
+        followers: insights.page_follows || page.followers,
+      });
+
+      // Create analytics entries for new data
+      if (insights.reach || insights.impressions) {
+        await storage.createAnalytics({
+          pageId: pageId,
+          date: new Date(),
+          reach: insights.reach || 0,
+          impressions: insights.impressions || 0,
+          engagements: insights.engaged_users || 0,
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          clicks: 0,
+        });
+      }
+
+      res.json({
+        message: "Page data synced successfully",
+        page: updatedPage,
+        insights,
+        recentPostsCount: recentPosts.length,
+      });
+    } catch (error) {
+      console.error("Error syncing Facebook page data:", error);
+      res.status(500).json({ message: "Failed to sync page data" });
+    }
+  });
+
+  // Get Facebook page insights
+  app.get('/api/facebook-pages/:pageId/insights', isAuthenticated, async (req: any, res) => {
+    try {
+      const { pageId } = req.params;
+      const userId = req.user.claims.sub;
+
+      // Get the Facebook page
+      const page = await storage.getFacebookPage(pageId);
+      if (!page || page.userId !== userId) {
+        return res.status(404).json({ message: "Facebook page not found" });
+      }
+
+      // Get fresh insights from Facebook
+      const insights = await facebookService.getPageInsights(page.facebookPageId, page.accessToken);
+      
+      // Get historical analytics from our database
+      const analytics = await storage.getAnalytics(pageId);
+
+      res.json({
+        liveInsights: insights,
+        historicalData: analytics,
+      });
+    } catch (error) {
+      console.error("Error fetching page insights:", error);
+      res.status(500).json({ message: "Failed to fetch page insights" });
+    }
+  });
+
   app.post('/api/facebook-pages', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -214,14 +479,15 @@ Ready to scale your content strategy? Let's connect!
       let generatedText: string;
       let imageUrl: string | null = null;
 
-      // Generate text content
-      if (aiModel === 'gpt-5' || !aiModel) {
-        generatedText = await generateContent(prompt, contentType);
-      } else {
-        // For other AI models, we'd integrate Claude/Perplexity here
-        // For now, fallback to OpenAI
-        generatedText = await generateContent(prompt, contentType);
-      }
+      // Generate text content using AI Manager for multi-model support
+      const aiResponse = await aiManager.generateContent({
+        prompt,
+        contentType: contentType as any,
+        model: aiModel as any || 'gpt-5',
+        includeResearch: contentType === 'report' || prompt.toLowerCase().includes('research'),
+      });
+      
+      generatedText = aiResponse.content;
 
       // Generate image if requested
       if (includeImage) {
@@ -240,7 +506,7 @@ Ready to scale your content strategy? Let's connect!
         pageId: pageId || null,
         content: generatedText,
         contentType: contentType || 'post',
-        aiModel: aiModel || 'gpt-5',
+        aiModel: aiResponse.model,
         prompt,
         imageUrl,
         status: 'draft'

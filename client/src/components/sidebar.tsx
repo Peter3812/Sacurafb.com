@@ -9,6 +9,7 @@ export default function Sidebar() {
     { path: "/content", icon: "fas fa-magic", label: "AI Content" },
     { path: "/scheduler", icon: "fas fa-calendar-alt", label: "Scheduler" },
     { path: "/facebook-pages", icon: "fab fa-facebook", label: "FB Pages" },
+    { path: "/facebook-connect", icon: "fas fa-plug", label: "Connect FB" },
     { path: "/messenger-bot", icon: "fas fa-comments", label: "Messenger Bot" },
     { path: "/analytics", icon: "fas fa-chart-bar", label: "Analytics" },
     { path: "/ad-intelligence", icon: "fas fa-bullseye", label: "Ad Intelligence" },
