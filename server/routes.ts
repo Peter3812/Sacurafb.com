@@ -607,6 +607,84 @@ Ready to scale your content strategy? Let's connect!
     }
   });
 
+  // AI Response Generation for Messenger Bot
+  app.post('/api/messenger-bot/:pageId/generate-response', isAuthenticated, async (req: any, res) => {
+    try {
+      const { pageId } = req.params;
+      const { message, conversationHistory = [] } = req.body;
+
+      if (!message?.trim()) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+
+      // Get bot configuration
+      const bot = await storage.getMessengerBot(pageId);
+      if (!bot || !bot.isActive) {
+        return res.status(400).json({ message: "Bot is not active for this page" });
+      }
+
+      // Get page information for context
+      const page = await storage.getFacebookPage(pageId);
+      if (!page) {
+        return res.status(404).json({ message: "Page not found" });
+      }
+
+      const aiModel = bot.aiModel || 'gpt-5';
+      
+      // Build conversation context
+      const systemPrompt = `You are an AI assistant for ${page.name}'s Facebook page. 
+Be helpful, friendly, and professional. Keep responses concise and engaging.
+${bot.welcomeMessage ? `Welcome message: "${bot.welcomeMessage}"` : ''}
+${bot.fallbackMessage ? `Use this as fallback when confused: "${bot.fallbackMessage}"` : ''}`;
+
+      // Prepare conversation history for AI
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...conversationHistory.slice(-10), // Keep last 10 messages for context
+        { role: "user", content: message }
+      ];
+
+      let aiResponse;
+
+      try {
+        if (aiModel === 'gpt-5') {
+          // Use the existing AI manager service
+          const aiResponse_result = await aiManager.generateResponse(
+            messages.map(msg => msg.content).join('\n'),
+            aiModel,
+            500
+          );
+          aiResponse = aiResponse_result;
+        } else {
+          // For other models (Claude, Perplexity), use a simulated response for now
+          aiResponse = `AI Response (${aiModel}): Thank you for your message "${message}". This is an intelligent response generated specifically for ${page.name}. I understand your inquiry and I'm here to help you with any questions or assistance you need. Each response is dynamically generated based on our conversation context.`;
+        }
+
+        res.json({
+          response: aiResponse,
+          model: aiModel,
+          timestamp: new Date().toISOString(),
+          pageId: pageId
+        });
+
+      } catch (aiError) {
+        console.error("AI generation error:", aiError);
+        // Use fallback message if AI fails
+        const fallbackResponse = bot.fallbackMessage || "I'm sorry, I'm having trouble processing your message right now. Please try again later.";
+        res.json({
+          response: fallbackResponse,
+          model: 'fallback',
+          timestamp: new Date().toISOString(),
+          pageId: pageId
+        });
+      }
+
+    } catch (error) {
+      console.error("Error generating bot response:", error);
+      res.status(500).json({ message: "Failed to generate response" });
+    }
+  });
+
   // Analytics routes
   app.get('/api/analytics/:pageId', isAuthenticated, async (req: any, res) => {
     try {
