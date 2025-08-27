@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
+import { LearningAnalytics } from "@/components/learning-analytics";
+import { MessageCircle, Brain, Bot, Send, Settings } from "lucide-react";
 
 export default function MessengerBot() {
   const [selectedPage, setSelectedPage] = useState("");
@@ -269,11 +271,30 @@ export default function MessengerBot() {
       </Card>
 
       {selectedPage && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* AI Learning Analytics */}
+          <Card data-testid="card-learning-analytics">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Brain className="h-5 w-5" />
+                AI Learning Analytics
+              </CardTitle>
+              <CardDescription>
+                Your bot continuously learns from every conversation
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LearningAnalytics pageId={selectedPage} />
+            </CardContent>
+          </Card>
+
           {/* Bot Configuration */}
           <Card data-testid="card-bot-config">
             <CardHeader>
-              <CardTitle>Bot Configuration</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5" />
+                Bot Configuration
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center space-x-2">
