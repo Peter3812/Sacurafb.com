@@ -1,0 +1,219 @@
+You are a senior full-stack/platform engineer and release manager. Build and prepare for production a COMPLETE SaaS called **FBPro.MCP** (AI-powered Facebook Business Manager) in a single monorepo, then run smoke tests. Execute sequentially, without asking questions, using safe defaults. Where secrets are needed, scaffold `.env.example` and read from environment at runtime. Never hardcode secrets. Produce concise logs and a final LAUNCH_REPORT.
+
+────────────────────────────────────────────────────────────────────────
+0) GOALS (do all)
+- Scaffold a production-ready monorepo with:
+  • Frontend: React 18 + Vite + Tailwind + shadcn/ui (TypeScript)
+  • Backend API: Python FastAPI + Gunicorn(UvicornWorker)
+  • DB: PostgreSQL (Neon-style connection string), SQLAlchemy + Alembic
+  • Cache/Jobs: Redis (Upstash-style URL), simple RQ/Arq or Celery (choose one)
+  • Auth: OIDC session (cookie-based), JWT for API (HS256 or RS256 via JWK)
+  • Billing: Stripe subscriptions (Starter/Pro/Business/Enterprise) + webhooks + Customer Portal
+  • AI: OpenAI, Anthropic (Claude), Perplexity clients + multi-AI router w/ fallbacks
+  • MCP: 
+      - facebook-ads-library-mcp (competitor ad discovery)
+      - facebook-ads-mcp-server (Meta Ads data/control)
+      - 10xer (dev productivity – optional/internal)
+    Implement as HTTP clients with service-to-service Bearer token;
+    also scaffold docker services for MCP if we want to self-host later.
+  • Observability: Sentry, Prometheus `/metrics`, health `/health`
+  • CI/CD: GitHub Actions – build+test, push API image to GHCR, redeploy to Koyeb; Frontend notes for Vercel
+  • Security: CORS locked to app domain, Helmet-like headers, CSRF for forms, rate limits, body size limits
+  • WAF/CDN: Cloudflare runbook + rules (docs + infra notes)
+  • Backup/DR: pg_dump script + GH Action nightly schedule
+  • GTM assets: landing copy, 4 lifecycle emails, KB skeleton
+  • Tests: unit + integration; k6 script; Lighthouse CI config
+  • Runbooks: incident severities, rollback, feature flags
+
+────────────────────────────────────────────────────────────────────────
+1) REPO STRUCTURE (create all files)
+/
+  apps/
+    frontend/                # React + Vite + Tailwind + shadcn/ui
+    api/                     # FastAPI service
+  services/
+    mcp-facebook-ads-library/  # container scaffold + client tests
+    mcp-meta-ads/              # container scaffold + client tests
+    10xer/                     # optional dev tool placeholder
+  ops/
+    ci/                      # GitHub Actions workflows
+    kb/                      # Knowledge Base markdown
+    emails/                  # lifecycle emails
+    scripts/                 # backup, restore, smoke tests, load tests
+  infra/
+    docker/                  # Dockerfiles, docker-compose.local.yml
+    cloudflare/              # WAF rules and CSP docs
+    grafana/                 # dashboard JSON
+  docs/
+    PRD.md                   # short PRD
+    LAUNCH_CHECKLIST.md      # summarized launch steps
+  .env.example
+  README.md
+
+────────────────────────────────────────────────────────────────────────
+2) ENV & SECRETS (scaffold .env.example – DO NOT commit real secrets)
+APP_ENV=production
+API_BASE_URL=https://api.fbpro.ai
+FRONTEND_BASE_URL=https://app.fbpro.ai
+CORS_ALLOWED_ORIGINS=https://app.fbpro.ai
+
+# Auth
+JWT_SECRET=REQUIRED
+SESSION_SECRET=REQUIRED
+OIDC_ISSUER_URL=REQUIRED
+OIDC_CLIENT_ID=REQUIRED
+OIDC_CLIENT_SECRET=REQUIRED
+OAUTH_REDIRECT_URL=https://app.fbpro.ai/auth/callback
+
+# Meta / Facebook
+META_APP_ID=REQUIRED
+META_APP_SECRET=REQUIRED
+META_WEBHOOK_VERIFY_TOKEN=REQUIRED
+META_GRAPH_VERSION=v20.0
+
+# AI
+OPENAI_API_KEY=REQUIRED
+ANTHROPIC_API_KEY=REQUIRED
+PERPLEXITY_API_KEY=REQUIRED
+
+# MCP
+MCP_SERVICE_TOKEN=REQUIRED
+MCP_ADS_LIBRARY_URL=https://mcp.fbpro.ai/library
+MCP_META_ADS_URL=https://mcp.fbpro.ai/meta
+MCP_10XER_URL=https://mcp.fbpro.ai/10xer
+
+# DB / Cache / Storage
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DB
+REDIS_URL=rediss://REQUIRED
+CLOUDINARY_URL=cloudinary://REQUIRED
+
+# Stripe
+STRIPE_SECRET_KEY=sk_live_REQUIRED
+STRIPE_PUBLISHABLE_KEY=pk_live_REQUIRED
+STRIPE_PRICE_STARTER=price_REQUIRED
+STRIPE_PRICE_PRO=price_REQUIRED
+STRIPE_PRICE_BUSINESS=price_REQUIRED
+STRIPE_PRICE_ENTERPRISE=price_REQUIRED
+STRIPE_WEBHOOK_SECRET=whsec_REQUIRED
+
+# Observability
+SENTRY_DSN=https://REQUIRED
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-collector.example.com
+LOG_LEVEL=info
+
+────────────────────────────────────────────────────────────────────────
+3) BACKEND (apps/api)
+- FastAPI app with:
+  • /health (200 + {ok:true, ts})
+  • /metrics (Prometheus)
+  • /auth/* OIDC session + JWT issuance endpoint
+  • /content/generate (POST: {prompt, model?: auto|openai|claude|perplexity}) => routes via multi-AI
+  • /schedule/* (create/list/update posts) – DB models + Alembic migrations
+  • /messenger/* (webhook receive; simple echo + Claude fallback)
+  • /ads/competitors/search?q= (proxy MCP Ads Library)
+  • /ads/campaigns/{id} (proxy MCP Meta Ads)
+  • /me/export (GDPR export JSON/CSV bundle)
+  • /me/delete (enqueues soft delete; purge after 7 days)
+  • /billing/create-checkout-session
+  • /billing/portal
+  • /webhooks/stripe (idempotent)
+
+- Libs: pydantic, httpx (timeout+retries), tenacity, stripe, sqlalchemy, alembic, redis, rq/celery, prometheus-client, sentry-sdk
+
+- Middleware: CORS (whitelist), rate limit (100 rpm/IP), body size cap, security headers
+
+- Alembic: migrations for users, pages, posts, schedules, metrics, subscriptions, webhooks, deletes queue
+
+- Multi-AI router:
+  • model "auto" chooses best by content type; fallbacks on quota/timeout
+  • log provider, token usage, latency metrics
+
+────────────────────────────────────────────────────────────────────────
+4) FRONTEND (apps/frontend)
+- React + Vite + Tailwind + shadcn/ui, routes:
+  / (Landing + pricing)
+  /app/dashboard (real-time cards: reach, engagement, scheduled posts)
+  /app/content (AI generator with model=auto/default; status: draft→scheduled→published)
+  /app/scheduler
+  /app/messenger (bot config: welcome/fallback/business hours)
+  /app/competitors (Ads Library search UI)
+  /app/billing (Stripe Checkout/Portal)
+  /app/settings (tokens, pages)
+- Auth guard; fetch with typed SDK; toasts; loading states; error boundaries
+- Lighthouse config & Axe checks script
+
+────────────────────────────────────────────────────────────────────────
+5) MCP SERVICES (services/)
+- Scaffold containerized stubs that forward to MCP endpoints defined in env (so we can self-host later).
+- Provide typed API clients in apps/api/lib/mcp_client.py with Bearer ${MCP_SERVICE_TOKEN}, httpx retries, 15s timeout.
+- Integration tests mock responses for /library and /meta paths.
+
+────────────────────────────────────────────────────────────────────────
+6) OBSERVABILITY & SECURITY
+- Sentry init (backend + frontend) with release tags (git SHA)
+- Prometheus metrics: req/sec, p95 latency, error rate, AI token errors, job queue depth
+- Security headers (strict CSP doc in infra/cloudflare/CSP.md), CORS restricted, CSRF for POST forms, helmet-like middleware, no PII in logs
+
+────────────────────────────────────────────────────────────────────────
+7) BILLING (Stripe)
+- Tiers: Starter($19), Pro($79), Business($199), Enterprise(custom)
+- Checkout + Portal endpoints; subscription status stored locally
+- Webhook: customer.subscription.updated & invoice.payment_failed handling with idempotency + retry/backoff
+- Dunning: day 0/3/7 emails, auto-downgrade after day 14 (queue job)
+
+────────────────────────────────────────────────────────────────────────
+8) CI/CD & DOCKER
+infra/docker/
+  - api.Dockerfile (python:3.11-slim, gunicorn+uvicornworker, port 8080)
+  - docker-compose.local.yml (api + postgres + redis)
+ops/ci/
+  - deploy-api.yml (GitHub Actions: test, build image, push GHCR, redeploy Koyeb service fbpro-api using KOYEB_TOKEN)
+README: steps to connect Vercel for frontend with envs.
+
+────────────────────────────────────────────────────────────────────────
+9) BACKUP/DR & TESTS
+ops/scripts/backup.sh  # pg_dump → S3 (AES256)
+GH Action: nightly cron 03:00 UTC to run backup.sh
+k6 load script hitting /health and an auth’d API path (200 VUs, 10m, p95<800ms)
+Lighthouse CI config with targets ≥90; Axe accessibility checks
+
+────────────────────────────────────────────────────────────────────────
+10) KB & EMAILS
+ops/kb/*.md: Getting started, Connect FB, AI content & scheduling, Messenger bot, Billing, Troubleshooting, Privacy & data
+ops/emails/*.md: welcome, activation (Day2), upsell (Day7), churn-save
+
+────────────────────────────────────────────────────────────────────────
+11) WAF/CDN (docs only)
+infra/cloudflare/WAF.md
+- Proxy app & api through Cloudflare
+- Rate limits: /api/* 60 rpm/IP; /auth/* 30 rpm/IP
+- Bot fight mode, firewall ASN blocks, optional geo rules
+- mTLS notes for internal MCP, CSP example
+
+────────────────────────────────────────────────────────────────────────
+12) SMOKE TESTS (generate ops/scripts/smoke.sh)
+- GET /health == 200
+- OIDC login roundtrip (mock)
+- Create draft → schedule → publish (sandbox)
+- Messenger webhook echo
+- Stripe test checkout + webhook event
+- MCP search call returns 200 (mock if real not available)
+
+────────────────────────────────────────────────────────────────────────
+13) OUTPUTS & ACCEPTANCE
+- Run unit/integration tests; print summary
+- Run k6 and output thresholds
+- Generate Grafana dashboard JSON in infra/grafana/dashboard.json (req/sec, p95, 5xx rate, AI errors, queue depth)
+- Print a tree of created files
+- Produce LAUNCH_REPORT.md at repo root including:
+  • How to set envs
+  • Local run commands
+  • Deployment steps (Koyeb API, Vercel)
+  • Cloudflare/WAF checklist
+  • Stripe product/price mapping
+  • Smoke test results
+  • Next steps & rollback guide
+
+If any step fails, fix and re-run automatically. When everything is done, output:
+=== LAUNCH_READY ===
+Repo prepared, tests passed (or notes), see LAUNCH_REPORT.md
