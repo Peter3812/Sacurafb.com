@@ -102,7 +102,7 @@ export default function Scheduler() {
                   <SelectValue placeholder="All pages" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All pages</SelectItem>
+                  <SelectItem value="all">All pages</SelectItem>
                   {Array.isArray(pages) && pages.map((page: any) => (
                     <SelectItem key={page.id} value={page.id}>
                       {page.name}

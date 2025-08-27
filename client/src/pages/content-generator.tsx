@@ -208,7 +208,7 @@ export default function ContentGenerator() {
                   <SelectValue placeholder="Select a page" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Pages</SelectItem>
+                  <SelectItem value="all">All Pages</SelectItem>
                   {Array.isArray(pages) && pages.map((page: any) => (
                     <SelectItem key={page.id} value={page.id}>
                       {page.name}
