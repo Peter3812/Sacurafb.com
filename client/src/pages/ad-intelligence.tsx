@@ -1,21 +1,75 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/useAuth";
+import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { useAuth } from "@/hooks/useAuth";
+import { 
+  Search, 
+  Target, 
+  BarChart3, 
+  TrendingUp, 
+  Users, 
+  ExternalLink, 
+  Calendar,
+  Globe,
+  DollarSign,
+  Eye,
+  Building,
+  Filter,
+  Download,
+  Trash2
+} from "lucide-react";
+
+interface AdData {
+  id: string;
+  adId: string;
+  pageId: string;
+  pageName: string;
+  adContent: string;
+  adCategory: string;
+  startDate: string;
+  endDate?: string;
+  spend: string;
+  impressions: number;
+  targetAudience: any;
+  platforms: string[];
+  adLibraryUrl: string;
+  currency: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+interface SearchQuery {
+  id: string;
+  searchTerms: string;
+  adType: string;
+  countries: string[];
+  resultsCount: number;
+  lastExecuted: string;
+  createdAt: string;
+}
 
 export default function AdIntelligence() {
+  const [searchTerms, setSearchTerms] = useState("");
+  const [adType, setAdType] = useState("ALL");
+  const [selectedCountries, setSelectedCountries] = useState(["US"]);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [adCategory, setAdCategory] = useState("all");
   const [sortBy, setSortBy] = useState("recent");
+  
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { isAuthenticated, isLoading } = useAuth();
 
   // Redirect to home if not authenticated
@@ -33,37 +87,95 @@ export default function AdIntelligence() {
     }
   }, [isAuthenticated, isLoading, toast]);
 
-  const { data: adIntelligence = [], isLoading: adsLoading, error: adsError } = useQuery({
-    queryKey: ["/api/ad-intelligence"],
+  const { data: adAnalytics = {}, isLoading: analyticsLoading } = useQuery({
+    queryKey: ["/api/ad-intelligence/analytics"],
     enabled: !!isAuthenticated,
   });
 
-  useEffect(() => {
-    if (adsError && isUnauthorizedError(adsError)) {
+  const { data: adData = [], isLoading: adsLoading, refetch: refetchAds } = useQuery({
+    queryKey: ["/api/ad-intelligence", { category: categoryFilter }],
+    enabled: !!isAuthenticated,
+  });
+
+  const { data: searchHistory = [], refetch: refetchHistory } = useQuery({
+    queryKey: ["/api/ad-library/searches"],
+    enabled: !!isAuthenticated,
+  });
+
+  const searchAdsMutation = useMutation({
+    mutationFn: async (searchData: any) => {
+      setIsSearching(true);
+      try {
+        const response = await apiRequest("POST", "/api/ad-library/search", searchData);
+        return response.json();
+      } finally {
+        setIsSearching(false);
+      }
+    },
+    onSuccess: (data) => {
       toast({
-        title: "Unauthorized",
-        description: "You are logged out. Logging in again...",
+        title: "Search Complete",
+        description: `Found ${data.totalCount} ads for "${data.searchTerms}"`,
+      });
+      refetchAds();
+      refetchHistory();
+      queryClient.invalidateQueries({ queryKey: ["/api/ad-intelligence/analytics"] });
+    },
+    onError: (error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Search Failed",
+        description: error.message || "Failed to search ads.",
         variant: "destructive",
       });
-      setTimeout(() => {
-        window.location.href = "/api/login";
-      }, 500);
-    }
-  }, [adsError, toast]);
+    },
+  });
+
+  const deleteSearchMutation = useMutation({
+    mutationFn: async (searchId: string) => {
+      const response = await apiRequest("DELETE", `/api/ad-library/search/${searchId}`);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Search Deleted",
+        description: "Search history entry removed successfully.",
+      });
+      refetchHistory();
+    },
+    onError: (error) => {
+      toast({
+        title: "Delete Failed",
+        description: error.message || "Failed to delete search.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleSearch = () => {
-    if (!searchQuery.trim()) {
+    if (!searchTerms.trim()) {
       toast({
-        title: "Search Query Required",
-        description: "Please enter a search term to discover ads.",
+        title: "Search Required",
+        description: "Please enter search terms.",
         variant: "destructive",
       });
       return;
     }
 
-    toast({
-      title: "Feature Coming Soon",
-      description: "Ad discovery from Facebook Ads Library will be available in the next update.",
+    searchAdsMutation.mutate({
+      searchTerms,
+      adType,
+      countries: selectedCountries
     });
   };
 
@@ -173,7 +285,7 @@ export default function AdIntelligence() {
             <CardHeader>
               <CardTitle>Discovered Ads</CardTitle>
               <p className="text-sm text-muted-foreground">
-                {adsLoading ? "Loading..." : `${Array.isArray(adIntelligence) ? adIntelligence.length : 0} ads found`}
+                {adsLoading ? "Loading..." : `${Array.isArray(adData) ? adData.length : 0} ads found`}
               </p>
             </CardHeader>
             <CardContent>
@@ -192,9 +304,9 @@ export default function AdIntelligence() {
                     </div>
                   ))}
                 </div>
-              ) : Array.isArray(adIntelligence) && adIntelligence.length > 0 ? (
+              ) : Array.isArray(adData) && adData.length > 0 ? (
                 <div className="space-y-4">
-                  {adIntelligence.map((ad: any, index: number) => (
+                  {adData.map((ad: any, index: number) => (
                     <div key={ad.id} className="border border-border rounded-lg p-4" data-testid={`ad-item-${index}`}>
                       <div className="flex items-start space-x-4">
                         {ad.adImageUrl && (

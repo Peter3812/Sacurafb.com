@@ -838,6 +838,129 @@ ${bot.fallbackMessage ? `Use this as fallback when confused: "${bot.fallbackMess
     });
   }
 
+  // Facebook Ads Library Routes
+  app.post('/api/ad-library/search', isAuthenticated, async (req: any, res) => {
+    try {
+      const { searchTerms, adType = 'ALL', countries = ['US'], startDate, endDate } = req.body;
+      const userId = req.user.claims.sub;
+
+      if (!searchTerms?.trim()) {
+        return res.status(400).json({ message: "Search terms are required" });
+      }
+
+      // Import the service dynamically to avoid module loading issues
+      const { facebookAdsLibraryService } = await import('./services/facebook-ads-library');
+
+      // Perform the search
+      const searchResults = await facebookAdsLibraryService.searchAds({
+        searchTerms,
+        adType,
+        countries,
+        startDate,
+        endDate
+      });
+
+      // Store search query
+      await storage.createAdLibrarySearch({
+        userId,
+        searchTerms,
+        adType,
+        countries,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
+        resultsCount: searchResults.data.length,
+        lastExecuted: new Date()
+      });
+
+      // Store ads intelligence data
+      if (searchResults.data.length > 0) {
+        await facebookAdsLibraryService.storeAdsIntelligence(userId, searchResults.data);
+      }
+
+      res.json({
+        results: searchResults.data,
+        totalCount: searchResults.data.length,
+        searchTerms,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("Error searching ads library:", error);
+      res.status(500).json({ message: "Failed to search ads library" });
+    }
+  });
+
+  app.get('/api/ad-library/searches', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const searches = await storage.getAdLibrarySearches(userId);
+      res.json(searches);
+    } catch (error) {
+      console.error("Error fetching searches:", error);
+      res.status(500).json({ message: "Failed to fetch searches" });
+    }
+  });
+
+  app.get('/api/ad-intelligence', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { category, searchTerms, startDate, endDate, limit } = req.query;
+      
+      const ads = await storage.searchAdIntelligence({
+        userId,
+        category,
+        searchTerms,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        limit: limit ? parseInt(limit) : undefined
+      });
+
+      res.json(ads);
+    } catch (error) {
+      console.error("Error fetching ad intelligence:", error);
+      res.status(500).json({ message: "Failed to fetch ad intelligence" });
+    }
+  });
+
+  app.get('/api/ad-intelligence/analytics', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      const [categoriesData, competitorsData] = await Promise.all([
+        storage.getAdsByCategory(userId),
+        storage.getTopCompetitors(userId)
+      ]);
+
+      const totalAds = categoriesData.reduce((sum, cat) => sum + cat.count, 0);
+      const totalSpend = categoriesData.reduce((sum, cat) => sum + cat.totalSpend, 0);
+
+      res.json({
+        overview: {
+          totalAds,
+          totalSpend,
+          averageSpendPerAd: totalAds > 0 ? (totalSpend / totalAds).toFixed(2) : 0,
+          categoriesCount: categoriesData.length,
+          competitorsCount: competitorsData.length
+        },
+        categories: categoriesData,
+        topCompetitors: competitorsData
+      });
+    } catch (error) {
+      console.error("Error fetching ad analytics:", error);
+      res.status(500).json({ message: "Failed to fetch ad analytics" });
+    }
+  });
+
+  app.delete('/api/ad-library/search/:searchId', isAuthenticated, async (req: any, res) => {
+    try {
+      const { searchId } = req.params;
+      await storage.deleteAdLibrarySearch(searchId);
+      res.json({ message: "Search deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting search:", error);
+      res.status(500).json({ message: "Failed to delete search" });
+    }
+  });
+
   // AI Learning Analytics Routes
   app.get('/api/messenger-bot/:pageId/conversations', isAuthenticated, async (req: any, res) => {
     try {

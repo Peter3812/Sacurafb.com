@@ -168,12 +168,42 @@ export const adIntelligence = pgTable("ad_intelligence", {
   pageName: text("page_name"),
   adContent: text("ad_content"),
   adImageUrl: varchar("ad_image_url"),
+  adVideoUrl: varchar("ad_video_url"),
+  adType: varchar("ad_type"), // POLITICAL_AND_ISSUE_ADS, ALL
+  adCategory: varchar("ad_category"),
   startDate: timestamp("start_date"),
   endDate: timestamp("end_date"),
+  isActive: boolean("is_active").default(true),
   spend: decimal("spend", { precision: 10, scale: 2 }),
   impressions: integer("impressions"),
   targetAudience: jsonb("target_audience").default('{}'),
+  demographicDistribution: jsonb("demographic_distribution").default('{}'),
+  countries: jsonb("countries").default('[]'),
+  regions: jsonb("regions").default('[]'),
+  platforms: jsonb("platforms").default('[]'), // Facebook, Instagram, etc.
+  funding: text("funding"), // Who paid for the ad
+  disclaimer: text("disclaimer"),
+  adLibraryUrl: varchar("ad_library_url"),
+  currency: varchar("currency").default("USD"),
+  estimatedAudience: jsonb("estimated_audience").default('{}'),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Facebook Ads Library Search Queries
+export const adLibrarySearches = pgTable("ad_library_searches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  searchTerms: text("search_terms").notNull(),
+  adType: varchar("ad_type").default("ALL"), // POLITICAL_AND_ISSUE_ADS, ALL
+  countries: jsonb("countries").default('["US"]'),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  resultsCount: integer("results_count").default(0),
+  lastExecuted: timestamp("last_executed"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Relations
@@ -297,6 +327,12 @@ export const insertBotLearningDataSchema = createInsertSchema(botLearningData).o
   updatedAt: true,
 });
 
+export const insertAdLibrarySearchSchema = createInsertSchema(adLibrarySearches).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -325,3 +361,6 @@ export type InsertAnalytics = z.infer<typeof insertAnalyticsSchema>;
 
 export type AdIntelligence = typeof adIntelligence.$inferSelect;
 export type InsertAdIntelligence = z.infer<typeof insertAdIntelligenceSchema>;
+
+export type AdLibrarySearch = typeof adLibrarySearches.$inferSelect;
+export type InsertAdLibrarySearch = z.infer<typeof insertAdLibrarySearchSchema>;
