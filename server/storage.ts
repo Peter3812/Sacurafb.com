@@ -3,6 +3,9 @@ import {
   facebookPages,
   generatedContent,
   messengerBots,
+  conversations,
+  conversationInsights,
+  botLearningData,
   analytics,
   adIntelligence,
   type User,
@@ -13,6 +16,12 @@ import {
   type InsertGeneratedContent,
   type MessengerBot,
   type InsertMessengerBot,
+  type Conversation,
+  type InsertConversation,
+  type ConversationInsight,
+  type InsertConversationInsight,
+  type BotLearningData,
+  type InsertBotLearningData,
   type Analytics,
   type InsertAnalytics,
   type AdIntelligence,
@@ -318,6 +327,195 @@ export class DatabaseStorage implements IStorage {
       .values(adData)
       .returning();
     return newAd;
+  }
+
+  // AI Learning and Conversation operations
+  async storeConversation(conversation: InsertConversation): Promise<Conversation> {
+    const [result] = await db
+      .insert(conversations)
+      .values(conversation)
+      .returning();
+    return result;
+  }
+
+  async getConversationHistory(pageId: string, conversationId: string, limit: number = 10): Promise<Conversation[]> {
+    return await db
+      .select()
+      .from(conversations)
+      .where(and(
+        eq(conversations.pageId, pageId),
+        eq(conversations.conversationId, conversationId)
+      ))
+      .orderBy(desc(conversations.createdAt))
+      .limit(limit);
+  }
+
+  async getPageConversations(pageId: string, limit: number = 100): Promise<Conversation[]> {
+    return await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.pageId, pageId))
+      .orderBy(desc(conversations.createdAt))
+      .limit(limit);
+  }
+
+  async analyzeConversations(pageId: string): Promise<ConversationInsight | null> {
+    // Get recent conversations for analysis
+    const recentConversations = await this.getPageConversations(pageId, 500);
+    
+    if (recentConversations.length === 0) {
+      return null;
+    }
+
+    // Analyze conversations and create insights
+    const totalConversations = recentConversations.length;
+    const avgResponseTime = recentConversations
+      .filter(c => c.responseTime)
+      .reduce((sum, c) => sum + (c.responseTime || 0), 0) / 
+      recentConversations.filter(c => c.responseTime).length;
+
+    const avgSatisfaction = recentConversations
+      .filter(c => c.userSatisfaction)
+      .reduce((sum, c) => sum + (c.userSatisfaction || 0), 0) / 
+      recentConversations.filter(c => c.userSatisfaction).length;
+
+    // Collect common intents
+    const intents = recentConversations
+      .map(c => c.intent)
+      .filter(Boolean)
+      .reduce((acc: {[key: string]: number}, intent) => {
+        acc[intent!] = (acc[intent!] || 0) + 1;
+        return acc;
+      }, {});
+
+    const commonIntents = Object.entries(intents)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 10)
+      .map(([intent, count]) => ({ intent, count }));
+
+    // Sentiment distribution
+    const sentiments = recentConversations
+      .map(c => c.sentiment)
+      .filter(Boolean)
+      .reduce((acc: {[key: string]: number}, sentiment) => {
+        acc[sentiment!] = (acc[sentiment!] || 0) + 1;
+        return acc;
+      }, {});
+
+    const botId = recentConversations[0]?.botId;
+    if (!botId) return null;
+
+    const insightData: InsertConversationInsight = {
+      pageId,
+      botId,
+      totalConversations,
+      avgResponseTime: avgResponseTime ? parseFloat(avgResponseTime.toFixed(2)) : null,
+      avgSatisfaction: avgSatisfaction ? parseFloat(avgSatisfaction.toFixed(2)) : null,
+      commonIntents,
+      sentimentDistribution: sentiments,
+      popularTopics: [],
+      improvedResponses: [],
+      learningRecommendations: this.generateLearningRecommendations(commonIntents, sentiments),
+    };
+
+    const [result] = await db
+      .insert(conversationInsights)
+      .values(insightData)
+      .returning();
+
+    return result;
+  }
+
+  private generateLearningRecommendations(intents: any[], sentiments: {[key: string]: number}): string {
+    const recommendations = [];
+    
+    if (intents.length > 0) {
+      const topIntent = intents[0];
+      recommendations.push(`Focus on improving responses for "${topIntent.intent}" (${topIntent.count} occurrences).`);
+    }
+
+    const totalSentiments = Object.values(sentiments).reduce((a, b) => a + b, 0);
+    const negativePercentage = ((sentiments.negative || 0) / totalSentiments) * 100;
+    
+    if (negativePercentage > 20) {
+      recommendations.push(`${negativePercentage.toFixed(1)}% of conversations show negative sentiment. Consider improving tone and helpfulness.`);
+    }
+
+    if (recommendations.length === 0) {
+      recommendations.push("Performance is good. Continue monitoring conversation patterns for optimization opportunities.");
+    }
+
+    return recommendations.join(" ");
+  }
+
+  async storeLearningData(learningData: InsertBotLearningData): Promise<BotLearningData> {
+    const [result] = await db
+      .insert(botLearningData)
+      .values(learningData)
+      .returning();
+    return result;
+  }
+
+  async getBotLearningData(pageId: string, botId: string): Promise<BotLearningData[]> {
+    return await db
+      .select()
+      .from(botLearningData)
+      .where(and(
+        eq(botLearningData.pageId, pageId),
+        eq(botLearningData.botId, botId),
+        eq(botLearningData.isActive, true)
+      ))
+      .orderBy(desc(botLearningData.responseQuality), desc(botLearningData.usageCount));
+  }
+
+  async updateBotLearningStats(botId: string): Promise<void> {
+    // Update bot performance statistics
+    const botConversations = await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.botId, botId));
+
+    const totalConversations = botConversations.length;
+    const successfulResponses = botConversations.filter(c => c.messageType === 'bot_response').length;
+    const learningScore = successfulResponses > 0 ? (successfulResponses / totalConversations) * 100 : 0;
+
+    await db
+      .update(messengerBots)
+      .set({
+        totalConversations,
+        successfulResponses,
+        learningScore: parseFloat(learningScore.toFixed(2)),
+        updatedAt: new Date(),
+      })
+      .where(eq(messengerBots.id, botId));
+  }
+
+  async findSimilarLearning(pageId: string, message: string): Promise<BotLearningData | null> {
+    // Simple pattern matching - in production, you'd use vector similarity
+    const learningData = await this.getBotLearningData(pageId, pageId);
+    
+    const messageLower = message.toLowerCase();
+    
+    for (const learning of learningData) {
+      const patternLower = learning.questionPattern.toLowerCase();
+      
+      // Simple keyword matching - could be enhanced with NLP
+      if (messageLower.includes(patternLower) || patternLower.includes(messageLower)) {
+        // Update usage count
+        await db
+          .update(botLearningData)
+          .set({
+            usageCount: learning.usageCount + 1,
+            lastUsed: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(botLearningData.id, learning.id));
+        
+        return learning;
+      }
+    }
+    
+    return null;
   }
 }
 

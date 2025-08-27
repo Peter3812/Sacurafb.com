@@ -80,6 +80,64 @@ export const messengerBots = pgTable("messenger_bots", {
   fallbackMessage: text("fallback_message"),
   aiModel: varchar("ai_model").default("gpt-5"),
   settings: jsonb("settings").default('{}'),
+  learningEnabled: boolean("learning_enabled").default(true),
+  totalConversations: integer("total_conversations").default(0),
+  successfulResponses: integer("successful_responses").default(0),
+  learningScore: decimal("learning_score", { precision: 5, scale: 2 }).default("0.00"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Conversation Storage for AI Learning
+export const conversations = pgTable("conversations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pageId: varchar("page_id").notNull().references(() => facebookPages.id, { onDelete: "cascade" }),
+  botId: varchar("bot_id").notNull().references(() => messengerBots.id, { onDelete: "cascade" }),
+  userId: varchar("user_id"), // Facebook user ID
+  userName: varchar("user_name"),
+  conversationId: varchar("conversation_id").notNull(), // Groups messages by conversation
+  messageType: varchar("message_type").notNull(), // 'user_message', 'bot_response'
+  content: text("content").notNull(),
+  sentiment: varchar("sentiment"), // positive, negative, neutral
+  intent: varchar("intent"), // question, complaint, compliment, request, etc.
+  aiModel: varchar("ai_model"),
+  responseTime: integer("response_time"), // milliseconds
+  userSatisfaction: integer("user_satisfaction"), // 1-5 rating if available
+  contextTags: jsonb("context_tags").default('[]'), // topics, keywords
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Conversation Analysis and Insights
+export const conversationInsights = pgTable("conversation_insights", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pageId: varchar("page_id").notNull().references(() => facebookPages.id, { onDelete: "cascade" }),
+  botId: varchar("bot_id").notNull().references(() => messengerBots.id, { onDelete: "cascade" }),
+  analysisDate: timestamp("analysis_date").defaultNow(),
+  totalConversations: integer("total_conversations").default(0),
+  avgResponseTime: decimal("avg_response_time", { precision: 8, scale: 2 }),
+  avgSatisfaction: decimal("avg_satisfaction", { precision: 3, scale: 2 }),
+  commonIntents: jsonb("common_intents").default('[]'),
+  sentimentDistribution: jsonb("sentiment_distribution").default('{}'),
+  popularTopics: jsonb("popular_topics").default('[]'),
+  improvedResponses: jsonb("improved_responses").default('[]'),
+  learningRecommendations: text("learning_recommendations"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Bot Learning Knowledge Base
+export const botLearningData = pgTable("bot_learning_data", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pageId: varchar("page_id").notNull().references(() => facebookPages.id, { onDelete: "cascade" }),
+  botId: varchar("bot_id").notNull().references(() => messengerBots.id, { onDelete: "cascade" }),
+  questionPattern: text("question_pattern").notNull(),
+  bestResponse: text("best_response").notNull(),
+  responseQuality: decimal("response_quality", { precision: 3, scale: 2 }).default("0.00"),
+  usageCount: integer("usage_count").default(0),
+  lastUsed: timestamp("last_used"),
+  userFeedback: jsonb("user_feedback").default('[]'),
+  contextKeywords: jsonb("context_keywords").default('[]'),
+  improvementNotes: text("improvement_notes"),
+  isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -133,6 +191,28 @@ export const facebookPagesRelations = relations(facebookPages, ({ one, many }) =
   generatedContent: many(generatedContent),
   messengerBot: one(messengerBots),
   analytics: many(analytics),
+  conversations: many(conversations),
+}));
+
+export const messengerBotsRelations = relations(messengerBots, ({ one, many }) => ({
+  page: one(facebookPages, {
+    fields: [messengerBots.pageId],
+    references: [facebookPages.id],
+  }),
+  conversations: many(conversations),
+  insights: many(conversationInsights),
+  learningData: many(botLearningData),
+}));
+
+export const conversationsRelations = relations(conversations, ({ one }) => ({
+  page: one(facebookPages, {
+    fields: [conversations.pageId],
+    references: [facebookPages.id],
+  }),
+  bot: one(messengerBots, {
+    fields: [conversations.botId],
+    references: [messengerBots.id],
+  }),
 }));
 
 export const generatedContentRelations = relations(generatedContent, ({ one, many }) => ({
@@ -147,12 +227,6 @@ export const generatedContentRelations = relations(generatedContent, ({ one, man
   analytics: many(analytics),
 }));
 
-export const messengerBotsRelations = relations(messengerBots, ({ one }) => ({
-  page: one(facebookPages, {
-    fields: [messengerBots.pageId],
-    references: [facebookPages.id],
-  }),
-}));
 
 export const analyticsRelations = relations(analytics, ({ one }) => ({
   page: one(facebookPages, {
@@ -207,6 +281,22 @@ export const insertAdIntelligenceSchema = createInsertSchema(adIntelligence).omi
   createdAt: true,
 });
 
+export const insertConversationSchema = createInsertSchema(conversations).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertConversationInsightSchema = createInsertSchema(conversationInsights).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertBotLearningDataSchema = createInsertSchema(botLearningData).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -220,6 +310,15 @@ export type InsertGeneratedContent = z.infer<typeof insertGeneratedContentSchema
 
 export type MessengerBot = typeof messengerBots.$inferSelect;
 export type InsertMessengerBot = z.infer<typeof insertMessengerBotSchema>;
+
+export type Conversation = typeof conversations.$inferSelect;
+export type InsertConversation = z.infer<typeof insertConversationSchema>;
+
+export type ConversationInsight = typeof conversationInsights.$inferSelect;
+export type InsertConversationInsight = z.infer<typeof insertConversationInsightSchema>;
+
+export type BotLearningData = typeof botLearningData.$inferSelect;
+export type InsertBotLearningData = z.infer<typeof insertBotLearningDataSchema>;
 
 export type Analytics = typeof analytics.$inferSelect;
 export type InsertAnalytics = z.infer<typeof insertAnalyticsSchema>;
