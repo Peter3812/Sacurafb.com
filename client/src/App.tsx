@@ -16,12 +16,16 @@ import AdIntelligence from "@/pages/ad-intelligence";
 import Billing from "@/pages/billing";
 import Settings from "@/pages/settings";
 import Layout from "@/components/layout";
+import { DemoContentTest } from "@/components/demo-content-test";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
 
   return (
     <Switch>
+      {/* Demo route - accessible without authentication */}
+      <Route path="/demo" component={DemoContentTest} />
+      
       {isLoading || !isAuthenticated ? (
         <Route path="/" component={Landing} />
       ) : (
