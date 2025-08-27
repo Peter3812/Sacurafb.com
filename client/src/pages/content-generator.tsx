@@ -185,7 +185,7 @@ export default function ContentGenerator() {
           <CardHeader>
             <CardTitle>Generate New Content</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 touch-form">
             <div className="space-y-2">
               <Label htmlFor="prompt">Content Prompt</Label>
               <Textarea
