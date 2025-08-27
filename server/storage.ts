@@ -8,6 +8,7 @@ import {
   botLearningData,
   analytics,
   adIntelligence,
+  adLibrarySearches,
   type User,
   type UpsertUser,
   type FacebookPage,
@@ -26,9 +27,11 @@ import {
   type InsertAnalytics,
   type AdIntelligence,
   type InsertAdIntelligence,
+  type AdLibrarySearch,
+  type InsertAdLibrarySearch,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations - mandatory for Replit Auth
@@ -327,6 +330,114 @@ export class DatabaseStorage implements IStorage {
       .values(adData)
       .returning();
     return newAd;
+  }
+
+  async searchAdIntelligence(params: {
+    userId: string;
+    searchTerms?: string;
+    category?: string;
+    startDate?: Date;
+    endDate?: Date;
+    limit?: number;
+  }): Promise<AdIntelligence[]> {
+    const { userId, searchTerms, category, startDate, endDate, limit = 50 } = params;
+    
+    let query = db
+      .select()
+      .from(adIntelligence)
+      .where(eq(adIntelligence.userId, userId));
+
+    if (searchTerms) {
+      // In production, you might use full-text search or better pattern matching
+      query = query.where(
+        sql`${adIntelligence.adContent} ILIKE '%' || ${searchTerms} || '%' OR ${adIntelligence.pageName} ILIKE '%' || ${searchTerms} || '%'`
+      );
+    }
+
+    if (category) {
+      query = query.where(eq(adIntelligence.adCategory, category));
+    }
+
+    if (startDate) {
+      query = query.where(gte(adIntelligence.startDate, startDate));
+    }
+
+    if (endDate) {
+      query = query.where(lte(adIntelligence.endDate, endDate));
+    }
+
+    return await query
+      .orderBy(desc(adIntelligence.createdAt))
+      .limit(limit);
+  }
+
+  async getAdsByCategory(userId: string): Promise<{category: string, count: number, totalSpend: number}[]> {
+    const results = await db
+      .select({
+        category: adIntelligence.adCategory,
+        count: sql<number>`count(*)::int`,
+        totalSpend: sql<number>`sum(${adIntelligence.spend}::numeric)::numeric`
+      })
+      .from(adIntelligence)
+      .where(eq(adIntelligence.userId, userId))
+      .groupBy(adIntelligence.adCategory)
+      .orderBy(desc(sql`count(*)`));
+
+    return results.map(row => ({
+      category: row.category || 'Unknown',
+      count: row.count,
+      totalSpend: Number(row.totalSpend) || 0
+    }));
+  }
+
+  async getTopCompetitors(userId: string, limit: number = 10): Promise<{pageName: string, adCount: number, totalSpend: number}[]> {
+    const results = await db
+      .select({
+        pageName: adIntelligence.pageName,
+        adCount: sql<number>`count(*)::int`,
+        totalSpend: sql<number>`sum(${adIntelligence.spend}::numeric)::numeric`
+      })
+      .from(adIntelligence)
+      .where(eq(adIntelligence.userId, userId))
+      .groupBy(adIntelligence.pageName)
+      .orderBy(desc(sql`sum(${adIntelligence.spend}::numeric)`))
+      .limit(limit);
+
+    return results.map(row => ({
+      pageName: row.pageName || 'Unknown',
+      adCount: row.adCount,
+      totalSpend: Number(row.totalSpend) || 0
+    }));
+  }
+
+  // Ad Library Search Management
+  async createAdLibrarySearch(searchData: InsertAdLibrarySearch): Promise<AdLibrarySearch> {
+    const [newSearch] = await db
+      .insert(adLibrarySearches)
+      .values(searchData)
+      .returning();
+    return newSearch;
+  }
+
+  async getAdLibrarySearches(userId: string): Promise<AdLibrarySearch[]> {
+    return await db
+      .select()
+      .from(adLibrarySearches)
+      .where(eq(adLibrarySearches.userId, userId))
+      .orderBy(desc(adLibrarySearches.createdAt));
+  }
+
+  async updateAdLibrarySearch(searchId: string, updates: Partial<InsertAdLibrarySearch>): Promise<AdLibrarySearch> {
+    const [updatedSearch] = await db
+      .update(adLibrarySearches)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(adLibrarySearches.id, searchId))
+      .returning();
+    return updatedSearch;
+  }
+
+  async deleteAdLibrarySearch(searchId: string): Promise<void> {
+    await db.delete(adLibrarySearches).where(eq(adLibrarySearches.id, searchId));
   }
 
   // AI Learning and Conversation operations
