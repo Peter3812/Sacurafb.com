@@ -105,6 +105,31 @@ export default function ContentGenerator() {
     },
   });
 
+  // Facebook publishing mutation
+  const publishToFacebookMutation = useMutation({
+    mutationFn: async ({ pageId, contentId, scheduleTime }: { pageId: string; contentId: string; scheduleTime?: string }) => {
+      const response = await apiRequest("POST", `/api/facebook-pages/${pageId}/publish`, {
+        contentId,
+        scheduleTime,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Published to Facebook",
+        description: data.message || "Content published successfully!",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/content"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Publishing Failed",
+        description: error.message || "Failed to publish to Facebook.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleGenerate = () => {
     if (!prompt.trim()) {
       toast({
@@ -194,9 +219,30 @@ export default function ContentGenerator() {
                   <SelectValue placeholder="Select AI model" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="gpt-5">GPT-5 (Latest)</SelectItem>
-                  <SelectItem value="claude">Claude</SelectItem>
-                  <SelectItem value="perplexity">Perplexity</SelectItem>
+                  <SelectItem value="gpt-5">
+                    <div className="flex items-center space-x-2">
+                      <i className="fas fa-robot text-green-600" />
+                      <span>GPT-5 (OpenAI) - General</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="claude-3-sonnet">
+                    <div className="flex items-center space-x-2">
+                      <i className="fas fa-pen-fancy text-purple-600" />
+                      <span>Claude 3 Sonnet - Creative</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="perplexity-sonar">
+                    <div className="flex items-center space-x-2">
+                      <i className="fas fa-search text-blue-600" />
+                      <span>Perplexity - Research</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="auto">
+                    <div className="flex items-center space-x-2">
+                      <i className="fas fa-magic text-orange-600" />
+                      <span>Auto-Select (Recommended)</span>
+                    </div>
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -323,7 +369,7 @@ export default function ContentGenerator() {
                     <Separator className="my-3" />
 
                     <div className="flex items-center justify-between">
-                      <div className="flex space-x-2">
+                      <div className="flex flex-wrap gap-2">
                         {content.status === 'draft' && (
                           <>
                             <Button 
@@ -350,6 +396,50 @@ export default function ContentGenerator() {
                               Publish Now
                             </Button>
                           </>
+                        )}
+                        
+                        {/* Facebook Publishing Section */}
+                        {Array.isArray(pages) && pages.length > 0 && content.status !== 'published' && (
+                          <div className="flex items-center space-x-2">
+                            <Select 
+                              onValueChange={(value) => {
+                                if (value) {
+                                  publishToFacebookMutation.mutate({ 
+                                    pageId: value, 
+                                    contentId: content.id 
+                                  });
+                                }
+                              }}
+                              disabled={publishToFacebookMutation.isPending}
+                            >
+                              <SelectTrigger className="h-8 w-40 text-xs">
+                                <SelectValue placeholder="Publish to Facebook" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Array.isArray(pages) && pages.map((page: any) => (
+                                  <SelectItem key={page.id} value={page.id}>
+                                    <div className="flex items-center space-x-2">
+                                      <i className="fab fa-facebook text-blue-600" />
+                                      <span>{page.name}</span>
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                        
+                        {(!Array.isArray(pages) || pages.length === 0) && (
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            onClick={() => window.open('/facebook-connect', '_blank')}
+                            data-testid={`button-connect-fb-${index}`}
+                            className="text-blue-600 border-blue-600 hover:bg-blue-50"
+                          >
+                            <i className="fab fa-facebook mr-1" />
+                            Connect FB
+                          </Button>
                         )}
                       </div>
                       <Button
