@@ -1,7 +1,13 @@
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
-export default function Sidebar() {
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const [location, setLocation] = useLocation();
 
   const navItems = [
@@ -21,24 +27,42 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="w-64 bg-card dark:bg-card border-r border-border dark:border-border flex-shrink-0">
-      <div className="p-6">
-        <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-            <i className="fab fa-facebook-f text-primary-foreground text-sm"></i>
+    <div className={cn(
+      "fixed inset-y-0 left-0 z-50 w-64 bg-card dark:bg-card border-r border-border dark:border-border transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-0 sidebar-mobile sidebar-compact",
+      isOpen ? "translate-x-0" : "-translate-x-full"
+    )}>
+      <div className="p-4 lg:p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+              <i className="fab fa-facebook-f text-primary-foreground text-sm"></i>
+            </div>
+            <h1 className="text-xl font-bold text-foreground dark:text-foreground">FBPro.MCP</h1>
           </div>
-          <h1 className="text-xl font-bold text-foreground dark:text-foreground">FBPro.MCP</h1>
+          {/* Mobile close button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+            data-testid="button-close-sidebar"
+          >
+            <i className="fas fa-times"></i>
+          </Button>
         </div>
       </div>
 
-      <nav className="px-4 pb-4">
+      <nav className="px-3 pb-4 lg:px-4">
         <div className="space-y-1">
           {navItems.map((item) => (
             <div
               key={item.path}
-              onClick={() => setLocation(item.path)}
+              onClick={() => {
+                setLocation(item.path);
+                onClose(); // Close mobile menu on navigation
+              }}
               className={cn(
-                "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all cursor-pointer",
+                "nav-item flex items-center space-x-3 px-3 py-4 text-sm font-medium rounded-lg transition-all cursor-pointer touch-manipulation min-h-[48px]",
                 location === item.path
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground dark:text-muted-foreground hover:bg-accent dark:hover:bg-accent hover:text-accent-foreground dark:hover:text-accent-foreground"
@@ -50,6 +74,7 @@ export default function Sidebar() {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   setLocation(item.path);
+                  onClose();
                 }
               }}
             >
@@ -64,9 +89,12 @@ export default function Sidebar() {
             {bottomNavItems.map((item) => (
               <div
                 key={item.path}
-                onClick={() => setLocation(item.path)}
+                onClick={() => {
+                  setLocation(item.path);
+                  onClose();
+                }}
                 className={cn(
-                  "nav-item flex items-center space-x-3 px-4 py-3 text-sm font-medium rounded-lg transition-all cursor-pointer",
+                  "nav-item flex items-center space-x-3 px-3 py-4 text-sm font-medium rounded-lg transition-all cursor-pointer touch-manipulation min-h-[48px]",
                   location === item.path
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground dark:text-muted-foreground hover:bg-accent dark:hover:bg-accent hover:text-accent-foreground dark:hover:text-accent-foreground"
@@ -78,6 +106,7 @@ export default function Sidebar() {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     setLocation(item.path);
+                    onClose();
                   }
                 }}
               >
